@@ -1,0 +1,16 @@
+/target
+/ui/node_modules
+/ui/dist
+/ui/bun.lock
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+*.db
+.env
+.env.*
+*.pem
+*.key
+docs/
+.claude/
