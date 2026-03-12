@@ -81,7 +81,35 @@ ui/             # Vue 3 + TypeScript frontend (shared by both modes)
 | Database | SQLite (default) or PostgreSQL |
 | Package manager | Bun (frontend), Cargo (Rust) |
 
-## Getting Started
+## Installation
+
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap saturn4er/apihop
+brew install apihop
+```
+
+### Download binary
+
+Grab the latest binary for your platform from [GitHub Releases](https://github.com/saturn4er/apihop/releases).
+
+### Desktop app
+
+Download the installer for your OS from [GitHub Releases](https://github.com/saturn4er/apihop/releases):
+
+- **macOS** — `.dmg`
+- **Linux** — `.deb`, `.rpm`, or `.AppImage`
+- **Windows** — `.msi` or `.exe`
+
+### Run
+
+```bash
+# Start the server (serves on http://localhost:3000)
+apihop
+```
+
+## Building from Source
 
 ### Prerequisites
 
