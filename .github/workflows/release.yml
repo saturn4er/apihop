@@ -16,10 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - name: Get tag
         id: tag
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -185,3 +188,79 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: false
+
+  update-homebrew:
+    needs: [publish-release, create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release binaries and compute checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.tag }}
+        run: |
+          for name in apihop-server-macos-arm64 apihop-server-macos-amd64 apihop-server-linux-amd64 apihop-server-linux-arm64; do
+            gh release download "$VERSION" --repo saturn4er/apihop --pattern "$name" --dir .
+            sha=$(sha256sum "$name" | awk '{print $1}')
+            echo "SHA_${name//-/_}=$sha" >> "$GITHUB_ENV"
+          done
+
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: saturn4er/homebrew-apihop
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Update formula
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          cat > Formula/apihop.rb << 'RUBY'
+          class Apihop < Formula
+            desc "Fast, open-source API client for REST, GraphQL, and WebSocket"
+            homepage "https://github.com/saturn4er/apihop"
+            version "VERSION_PLACEHOLDER"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/saturn4er/apihop/releases/download/vVERSION_PLACEHOLDER/apihop-server-macos-arm64"
+                sha256 "SHA_MACOS_ARM64_PLACEHOLDER"
+              else
+                url "https://github.com/saturn4er/apihop/releases/download/vVERSION_PLACEHOLDER/apihop-server-macos-amd64"
+                sha256 "SHA_MACOS_AMD64_PLACEHOLDER"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/saturn4er/apihop/releases/download/vVERSION_PLACEHOLDER/apihop-server-linux-arm64"
+                sha256 "SHA_LINUX_ARM64_PLACEHOLDER"
+              else
+                url "https://github.com/saturn4er/apihop/releases/download/vVERSION_PLACEHOLDER/apihop-server-linux-amd64"
+                sha256 "SHA_LINUX_AMD64_PLACEHOLDER"
+              end
+            end
+
+            def install
+              bin.install Dir.glob("apihop-server-*").first => "apihop"
+            end
+
+            test do
+              assert_match "apihop", shell_output("#{bin}/apihop --help 2>&1", 1)
+            end
+          end
+          RUBY
+
+          sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" Formula/apihop.rb
+          sed -i "s/SHA_MACOS_ARM64_PLACEHOLDER/$SHA_apihop_server_macos_arm64/g" Formula/apihop.rb
+          sed -i "s/SHA_MACOS_AMD64_PLACEHOLDER/$SHA_apihop_server_macos_amd64/g" Formula/apihop.rb
+          sed -i "s/SHA_LINUX_AMD64_PLACEHOLDER/$SHA_apihop_server_linux_amd64/g" Formula/apihop.rb
+          sed -i "s/SHA_LINUX_ARM64_PLACEHOLDER/$SHA_apihop_server_linux_arm64/g" Formula/apihop.rb
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/apihop.rb
+          git commit -m "Update apihop to ${{ needs.create-release.outputs.tag }}"
+          git push
