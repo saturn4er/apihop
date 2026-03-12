@@ -192,6 +192,19 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli@^2 --locked
 
+      - name: Set version from tag
+        shell: bash
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          cd crates/desktop
+          # Use node to safely update JSON
+          node -e "
+            const fs = require('fs');
+            const conf = JSON.parse(fs.readFileSync('tauri.conf.json', 'utf8'));
+            conf.version = '${VERSION}';
+            fs.writeFileSync('tauri.conf.json', JSON.stringify(conf, null, 2) + '\n');
+          "
+
       - name: Build desktop app
         working-directory: crates/desktop
         run: cargo tauri build --target ${{ matrix.target }}
@@ -233,14 +246,27 @@ jobs:
     needs: [publish-release, create-release]
     runs-on: ubuntu-latest
     steps:
-      - name: Compute source tarball checksum
+      - name: Compute checksums
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.create-release.outputs.tag }}
+          SEMVER: ${{ needs.create-release.outputs.version }}
         run: |
+          # Source tarball
           gh release download "$VERSION" --repo saturn4er/apihop --archive=tar.gz --dir .
-          sha=$(sha256sum *.tar.gz | awk '{print $1}')
-          echo "SHA_SOURCE=$sha" >> "$GITHUB_ENV"
+          echo "SHA_SOURCE=$(sha256sum *.tar.gz | awk '{print $1}')" >> "$GITHUB_ENV"
+
+          # macOS DMGs
+          gh release download "$VERSION" --repo saturn4er/apihop \
+            --pattern "apihop_${SEMVER}_aarch64.dmg" \
+            --pattern "apihop_${SEMVER}_x64.dmg" \
+            --dir . || true
+          if [ -f "apihop_${SEMVER}_aarch64.dmg" ]; then
+            echo "SHA_DMG_ARM=$(sha256sum apihop_${SEMVER}_aarch64.dmg | awk '{print $1}')" >> "$GITHUB_ENV"
+          fi
+          if [ -f "apihop_${SEMVER}_x64.dmg" ]; then
+            echo "SHA_DMG_INTEL=$(sha256sum apihop_${SEMVER}_x64.dmg | awk '{print $1}')" >> "$GITHUB_ENV"
+          fi
 
       - name: Checkout homebrew tap
         uses: actions/checkout@v4
@@ -257,10 +283,25 @@ jobs:
           # Remove any existing bottle block so tap CI rebuilds it
           sed -i '/^  bottle do$/,/^  end$/d' Formula/apihop.rb
 
+      - name: Update cask version and SHAs
+        if: env.SHA_DMG_ARM != '' || env.SHA_DMG_INTEL != ''
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/apihop.rb
+          if [ -n "$SHA_DMG_ARM" ]; then
+            # Replace the sha256 inside on_arm block (first sha256 after on_arm)
+            sed -i "/on_arm do/,/end/{s/sha256 \".*\"/sha256 \"${SHA_DMG_ARM}\"/}" Casks/apihop.rb
+          fi
+          if [ -n "$SHA_DMG_INTEL" ]; then
+            # Replace the sha256 inside on_intel block (first sha256 after on_intel)
+            sed -i "/on_intel do/,/end/{s/sha256 \".*\"/sha256 \"${SHA_DMG_INTEL}\"/}" Casks/apihop.rb
+          fi
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/apihop.rb
+          git add Formula/apihop.rb Casks/apihop.rb
           git diff --cached --quiet || git commit -m "Update apihop to ${{ needs.create-release.outputs.tag }}"
           git push
